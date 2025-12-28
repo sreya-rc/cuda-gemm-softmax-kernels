@@ -2,8 +2,6 @@
 
 This project implements core ML inference primitives — **GEMM** (matrix multiply) and **row-wise softmax** — in CUDA, progressing from a naive baseline to **optimized shared-memory tiled kernels**.
 
-The goal: show **practical GPU kernel engineering** — memory access patterns, tiling, synchronization, and performance measurement — not just correctness.
-
 > Result: **~1347× faster GEMM vs CPU** and **~4.3× faster tiled softmax vs naive GPU** on NVIDIA T4 (Colab).
 
 ---
@@ -15,7 +13,7 @@ Modern ML inference (Transformers, Attention, MatMul layers, classifier heads) i
 - Softmax on rows of scores
 - Elementwise transformations
 
-This repo builds these *from scratch*, the same way they exist inside TensorRT, DirectML, cuBLAS, and cuDNN — just scaled down for clarity.
+This project builds these from scratch, the same way they exist inside TensorRT, DirectML, cuBLAS, and cuDNN, just scaled down for clarity.
 
 ---
 
@@ -42,7 +40,7 @@ Measurement tool:
 ## Implementation Breakdown
 
 ### CPU Baseline
-Naive triple-nested GEMM + softmax used solely for **ground-truth correctness**.
+Naive triple-nested GEMM + softmax used solely for **correctness**.
 
 ### Naive CUDA GEMM
 - One thread computes one output element `C[i,j]`
@@ -57,7 +55,7 @@ Naive triple-nested GEMM + softmax used solely for **ground-truth correctness**.
 ### GPU Softmax
 - Naive: one thread loops over row → massively under-utilized GPU
 - Optimized: **one block per row**, shared memory + block-wide parallel reduction
-- Atomic-based reduction (simple & safe).  
+- Atomic-based reduction.  
   Future: warp-shuffle reductions to remove atomics.
 
 ---
@@ -65,7 +63,7 @@ Naive triple-nested GEMM + softmax used solely for **ground-truth correctness**.
 ### How to Build & Run
 
 #### Requirements
-- NVIDIA GPU (T4 used for measurements — Colab works)
+- NVIDIA GPU (Google Colab T4 used for measurements)
 - CUDA toolkit (nvcc)
 - C++ compiler
 
