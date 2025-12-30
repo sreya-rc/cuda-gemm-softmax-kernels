@@ -1,77 +1,81 @@
-# CUDA GEMM + Softmax Kernels (FP32) — Naive → Shared Memory Optimized
+# CUDA GEMM + Softmax Kernels (FP32) — Naive → Shared Memory → Warp-Level Optimized
 
-This project implements core ML inference primitives — **GEMM** (matrix multiply) and **row-wise softmax** — in CUDA, progressing from a naive baseline to **optimized shared-memory tiled kernels**.
+This project implements core ML inference primitives — **GEMM** (matrix multiply) and **row-wise softmax** — directly in CUDA.  
+The implementation progresses from simple baselines to optimized GPU kernels using shared memory tiling and warp shuffle intrinsics.
 
-> Result: **~1347× faster GEMM vs CPU** and **~4.3× faster tiled softmax vs naive GPU** on NVIDIA T4 (Colab).
-
----
-
-## Why This Project?
-
-Modern ML inference (Transformers, Attention, MatMul layers, classifier heads) is dominated by:
-- Matrix multiply (`Q*Kᵀ`)
-- Softmax on rows of scores
-- Elementwise transformations
-
-This project builds these from scratch, the same way they exist inside TensorRT, DirectML, cuBLAS, and cuDNN, just scaled down for clarity.
+The goal is to demonstrate practical GPU kernel engineering:
+- memory access patterns
+- parallel execution mapping
+- shared memory tiling
+- warp-level reductions
+- correctness and timing measurement using CUDA events
 
 ---
 
-### Benchmarks — NVIDIA T4 (FP32, M = K = N = 512)
+## Benchmarks — NVIDIA T4 (FP32, M = K = N = 512)
 
-| Category | Variant | Time (s) | Speedup |
-|----------|---------|----------:|--------:|
-| **GEMM** | CPU baseline | 0.750677 | 1× |
-|          | Naive CUDA | 0.00127517 | **588.7× faster** |
-|          | Tiled CUDA (16×16 shared memory) | 0.000995072 | **754.4× faster** |
-| **Softmax** | CPU baseline | 0.00485313 | 1× |
-|            | Naive CUDA (serial per row) | 0.001128 | **4.30× faster** |
-|            | Tiled CUDA (shared memory + parallel reduction) | 0.000237248 | **20.46× faster** |
+### GEMM Performance
 
+| Variant | Time (s) | Speedup vs CPU |
+|--------|----------:|----------------:|
+| CPU baseline | 0.193987 | 1× |
+| Naive CUDA | 0.00130179 | 149.0× |
+| Tiled CUDA (16×16 shared memory) | 0.000983168 | 197.3× |
 
-Correctness check:  
-✔ `max_abs_error = 4.57e-05` vs CPU reference
+### Softmax Performance
 
-Measurement tool:  
-✔ CUDA events (`cudaEventRecord`) — not wall-clock timing
+| Variant | Time (s) | Speedup vs CPU | Speedup vs naive |
+|--------|----------:|----------------:|------------------:|
+| CPU baseline | 0.00299208 | 1× | — |
+| Naive CUDA (1 thread/row) | 0.00112278 | 2.66× | — |
+| Tiled CUDA (shared memory, block-wide reduction) | 0.000224576 | 13.32× | 4.99× |
+| Warp-shuffle optimized softmax (`__shfl_down_sync`) | 0.000071904 | 41.61× | 15.62× |
+
+**Correctness:**  
+All kernels produce a maximum absolute error ≤ **4.57e-05** relative to CPU reference.
+
+**Timing method:**  
+CUDA events (`cudaEventRecord`) — not wall-clock time.
 
 ---
 
-## Implementation Breakdown
+## Implementation Overview
 
-### CPU Baseline
-Naive triple-nested GEMM + softmax used solely for **correctness**.
+### CPU Reference
+Used only for correctness and baseline comparison.
+
+- triple-nested GEMM
+- row-wise softmax with max-subtraction for stability
 
 ### Naive CUDA GEMM
-- One thread computes one output element `C[i,j]`
-- **Global memory accessed repeatedly**
-- Good enough for correctness, not performance
+Each thread computes one output element `C[i,j]`.  
+Global memory reused repeatedly → memory-bound performance.
 
-### Tiled CUDA GEMM (Shared Memory)
-- Tiles of A and B loaded into **`__shared__`** buffers
-- Each tile reused across 16×16 threads → **dramatically fewer global loads**
-- Synchronization via `__syncthreads()`
+### Tiled CUDA GEMM
+Each thread block:
+- loads tiles of A and B into `__shared__` memory
+- synchronizes (`__syncthreads()`)
+- reuses data across 16×16 threads
 
-### GPU Softmax
-- Naive: one thread loops over row → massively under-utilized GPU
-- Optimized: **one block per row**, shared memory + block-wide parallel reduction
-- Atomic-based reduction.  
-  Future: warp-shuffle reductions to remove atomics.
+Reduces global memory traffic significantly.
+
+### Softmax Kernels
+- Naive softmax: 1 thread per row
+- Tiled softmax: 1 block per row + shared memory scratch buffer
+- Warp softmax: No shared memory or atomics; uses warp shuffles for reductions
 
 ---
 
-### How to Build & Run
+## Build and Run
 
-#### Requirements
-- NVIDIA GPU (Google Colab T4 used for measurements)
-- CUDA toolkit (nvcc)
+### Requirements
+- NVIDIA GPU with CUDA support
+- CUDA toolkit (`nvcc`)
 - C++ compiler
 
-#### Build
+### Build from source
 ```bash
 nvcc -arch=sm_75 -O3 -rdc=true \
   src/main.cu src/gemm_naive.cu src/gemm_tiled.cu \
-  src/softmax_naive.cu src/softmax_tiled.cu \
+  src/softmax_naive.cu src/softmax_tiled.cu src/softmax_warp.cu \
   -o run
-```
-
